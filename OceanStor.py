@@ -115,7 +115,7 @@ class OceanStor(object):
                 response = self.opener.open(url, json.dumps(data).encode("utf-8"))
             else:
                 response = self.opener.open(url)
-            content = response.read()
+            content = response.read().decode('utf-8')
             response_json = json.loads(content)
             # Comprovar si request ok
             if response_json['error']['code'] != 0:
@@ -135,7 +135,7 @@ class OceanStor(object):
                   format(self.host, self.system_id)
             
             response = self.opener.open(url, json.dumps(formdata).encode("utf-8"))
-            content = response.read()
+            content = response.read().decode('utf-8')
             
             response_json = json.loads(content)
             # Comprvar login ok

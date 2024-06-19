@@ -14,7 +14,8 @@
 # Modifications
 #   
 #   Jan 2020: Adapt to python for centos /
-#   June 2024: Python3 compatible. User mgmt functions
+#   June 2024: Python3 compatible.
+#       Added some user, share and quota management functions
 # TODO:
 #
 import urllib.request, urllib.parse, urllib.error
@@ -23,7 +24,8 @@ import ssl
 import json
 import datetime
 from http.cookiejar import CookieJar
-from enum import Enum
+from enum import Enum, IntEnum
+import logging
 
 
 class OceanStorError(Exception):
@@ -51,6 +53,9 @@ class OceanStorSharePermission( Enum ):
     FULL_CONTROL = 1
     FORBIDDEN = 2
     READ_WRITE = 5
+class OceanStorParentType( IntEnum ):
+    FILESYSTEM = 40,
+    DTREE = 16445
 
 class OceanStor(object):
     """Class that connects to OceanStor device and gets information."""
@@ -67,6 +72,7 @@ class OceanStor(object):
         self.opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=self.ctx),
                                            urllib.request.HTTPCookieProcessor(self.cookies))
         self.opener.addheaders = [('Content-Type', 'application/json; charset=utf-8')]
+        self.logger = logging.getLogger(__name__)
 
     def alarm_level_text(self, level):
         if level == 3:
@@ -112,11 +118,29 @@ class OceanStor(object):
     def query(self, url, data = None):
         try:
             if data:
-                response = self.opener.open(url, json.dumps(data).encode("utf-8"))
+                response = self.opener.open( url, json.dumps(data).encode("utf-8") )
             else:
-                response = self.opener.open(url)
-            content = response.read().decode('utf-8')
+                response = self.opener.open( url )
+            content = response.read().decode( 'utf-8' )
             response_json = json.loads(content)
+            # Comprovar si request ok
+            if response_json['error']['code'] != 0:
+                raise OceanStorError(
+                        "ERROR: Got an error response from system ({0}): {1}".
+                        format(response_json['error']['code'], response_json['error']['description']))
+        except Exception as e:
+            raise OceanStorError("HTTP Exception: {0}".format(e))
+        return response_json
+    
+    # Modify operations use PUT instead of POST
+    def modify(self, url, data = None):
+        try:
+            req = urllib.request.Request( url, data= json.dumps(data).encode("utf-8"), method='PUT' )
+            response = self.opener.open( req )
+
+            content = response.read().decode( 'utf-8' )
+            response_json = json.loads(content)
+
             # Comprovar si request ok
             if response_json['error']['code'] != 0:
                 raise OceanStorError(
@@ -186,6 +210,10 @@ class OceanStor(object):
             pass
         return a
 
+    # Returns a list of lists (one for each matching, non clone, fs) containing
+    # the name the capacity, available capacity, % used, reserved, used reserve
+    # and finally the id.
+    # This method has been extended to return the id of the file system.
     def filesystems(self, pattern):
         a = list()
         try:
@@ -223,7 +251,8 @@ class OceanStor(object):
                                   pctused,
                                   reserved,
                                   usedreserved,
-                                  pctusedreserved])
+                                  pctusedreserved,
+				  i["ID"]])
         except Exception as e:
             raise OceanStorError("HTTP Exception: {0}".format(e))
         return a
@@ -448,3 +477,113 @@ class OceanStor(object):
         except Exception as e:
             raise OceanStorError("HTTP Exception: {0}".format(e))
         return None
+
+    # Returns the number of quotas of a certain filesystem or dtree
+    def quotas(self, parentId : str, parentType : OceanStorParentType, vStoreId = None ) -> int:
+        try:
+            self.system()
+            url = "https://{0}:8088/deviceManager/rest/{1}/FS_QUOTA/count?".\
+                  format(self.host, self.system_id)
+            params = {
+                'PARENTTYPE': parentType.value,
+                'PARENTID': parentId,
+                'QUERYTYPE': 0
+            }
+            if vStoreId is not None:
+                params[ 'vstoreId' ] = vStoreId.encode("utf-8")
+        
+            url = url + urllib.parse.urlencode( params )
+            response_json = self.query(url)
+            # Get interesting data into list
+            return int( response_json["data"]["COUNT"] )
+        except Exception as e:
+            raise OceanStorError("HTTP Exception: {0}".format(e))
+        return 0
+    # Returns all the information on a single quota id
+    # Sizes will be given in bytes
+    def quota( self, quotaId : str, vStoreId = None ):
+        res = dict()
+        try:
+            self.system()
+            url = "https://{0}:8088/deviceManager/rest/{1}/FS_QUOTA/{2}?".\
+                  format( self.host, self.system_id, quotaId )
+            params = {
+		        'SPACEUNITTYPE': 0,
+            }
+            if vStoreId is not None:
+                params[ 'vstoreId' ] = vStoreId.encode("utf-8")
+        
+            url = url + urllib.parse.urlencode( params )
+            response_json = self.query(url)
+            res = response_json["data"]
+        except Exception as e:
+            raise OceanStorError("HTTP Exception: {0}".format(e))
+        return res
+
+    # Queries quota for a user and file system/dtree using the batch query
+    # It will return either a single entry or an empty dict
+    def quotauser( self, user : str, parentId : str, parentType : OceanStorParentType, vStoreId = None ):
+        # First query the number of quotas
+        nQuotas = self.quotas( parentId, parentType, vStoreId )
+        pageSize = 1
+
+        # We will be using "Interface for Batch Querying Quota Information"
+        # It is similar to the web ui for Quota Reports and thus it should only
+        # return one entry per user.
+        # The algorithm here is to look through pages until we find one entry
+        # for the user we're looking for.
+
+
+        res = dict()
+
+        for i in range( 0, nQuotas, pageSize ):
+            rangeMax = min( i + pageSize , nQuotas )
+            try:
+                self.system()
+                url = "https://{0}:8088/deviceManager/rest/{1}/FS_QUOTA?".\
+                    format( self.host, self.system_id)
+                params = {
+                    'PARENTTYPE': parentType.value,
+                    'PARENTID': parentId,
+                    'QUERYTYPE': 0,
+                    'SPACEUNITTYPE': 0,
+                    'range': "[{}-{}]".format( i, rangeMax )
+                }
+                if vStoreId is not None:
+                    params[ 'vstoreId' ] = vStoreId.encode("utf-8")
+            
+                url = url + urllib.parse.urlencode( params )
+                self.logger.debug( "URL: {}".format( url ) )
+                response_json = self.query(url)
+
+            except Exception as e:
+                raise OceanStorError("HTTP Exception: {0}".format(e))
+            
+            # For each entry in the current page
+            for quotaInfo in response_json["data"]:
+                # Check if USRGRPOWNERNAME is defined
+                if "USRGRPOWNERNAME" in quotaInfo and quotaInfo[ "USRGRPOWNERNAME" ] == user:
+                    res = quotaInfo
+                    return res
+
+        return res
+
+    def modifyquota( self, user : str, quotaId : str, spaceSoftQuota: int, spaceHardQuota: int, vStoreId = None ):
+        try:
+            self.system()
+            url = "https://{0}:8088/deviceManager/rest/{1}/FS_QUOTA/{2}".\
+                  format( self.host, self.system_id, quotaId )
+            
+            formdata = {
+                # Is the ID required here?
+		        'SPACEUNITTYPE': 0,
+                'SPACESOFTQUOTA': str( spaceSoftQuota ),
+                'SPACEHARDQUOTA': str( spaceHardQuota )
+            }
+            if vStoreId is not None:
+                formdata[ 'vstoreId' ] = vStoreId.encode( "utf-8" )
+           
+            self.logger.debug( "URL: {}, formdata: {}".format( url, formdata ) )
+            response_json = self.modify( url, formdata )
+        except Exception as e:
+            raise OceanStorError("HTTP Exception: {0}".format(e))

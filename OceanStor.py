@@ -279,9 +279,6 @@ class OceanStor(object):
                 parentKey : parentValue.encode("utf-8")})
             
             response_json = self.query(url)
-            # Get interesting data into list
-            #for i in response_json["data"]:
-
             return response_json["data"]
 
         except Exception as e:
@@ -307,8 +304,6 @@ class OceanStor(object):
                                           format(pattern).encode("utf-8")})
             
             response_json = self.query(url)
-            # Get interesting data into list
-            #for i in response_json["data"]:
 
             return response_json["data"]
 
@@ -392,9 +387,6 @@ class OceanStor(object):
             url = "https://{0}:8088/deviceManager/rest/{1}/UNIX_USER".\
                    format(self.host, self.system_id)
             
-            #response = self.opener.open(url, json.dumps(formdata).encode("utf-8"))
-            #content = response.read()
-            #response_json = json.loads(content)
             response_json = self.query(url, formdata)
             
             return True
@@ -499,6 +491,7 @@ class OceanStor(object):
         except Exception as e:
             raise OceanStorError("HTTP Exception: {0}".format(e))
         return 0
+ 
     # Returns all the information on a single quota id
     # Sizes will be given in bytes
     def quota( self, quotaId : str, vStoreId = None ):
@@ -525,7 +518,7 @@ class OceanStor(object):
     def quotauser( self, user : str, parentId : str, parentType : OceanStorParentType, vStoreId = None ):
         # First query the number of quotas
         nQuotas = self.quotas( parentId, parentType, vStoreId )
-        pageSize = 1
+        pageSize = 1000
 
         # We will be using "Interface for Batch Querying Quota Information"
         # It is similar to the web ui for Quota Reports and thus it should only

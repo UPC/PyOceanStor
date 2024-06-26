@@ -132,10 +132,12 @@ class OceanStor(object):
             raise OceanStorError("HTTP Exception: {0}".format(e))
         return response_json
     
+    # This method will be used instead of query for PUT or DELTE operations
     # Modify operations use PUT instead of POST
-    def modify(self, url, data = None):
+    # Delete operations use DELETE
+    def request(self, url, method : str, data = None):
         try:
-            req = urllib.request.Request( url, data= json.dumps(data).encode("utf-8"), method='PUT' )
+            req = urllib.request.Request( url, data= json.dumps(data).encode("utf-8"), method = method )
             response = self.opener.open( req )
 
             content = response.read().decode( 'utf-8' )
@@ -577,6 +579,38 @@ class OceanStor(object):
                 formdata[ 'vstoreId' ] = vStoreId.encode( "utf-8" )
            
             self.logger.debug( "URL: {}, formdata: {}".format( url, formdata ) )
-            response_json = self.modify( url, formdata )
+            response_json = self.request( url, 'PUT', formdata )
+        except Exception as e:
+            raise OceanStorError("HTTP Exception: {0}".format(e))
+
+    # Deletes a CIFS share by its identifier
+    def deletecifsshare( self, shareId: int,  vStoreId = None ):
+        try:
+            self.system()
+            url = "https://{0}:8088/deviceManager/rest/{1}/CIFSSHARE/{2}".\
+                  format( self.host, self.system_id, shareId )
+            params = {}
+            if vStoreId is not None:
+                params[ 'vstoreId' ] = vStoreId.encode( "utf-8" )
+        
+            url = url + urllib.parse.urlencode( params )
+           
+            response_json = self.request( url, 'DELETE' )
+        except Exception as e:
+            raise OceanStorError("HTTP Exception: {0}".format(e))
+    
+    # Deletes a dtree by its id
+    def deletedtree( self, dtreeId: str, vStoreId = None):
+        try:
+            self.system()
+            url = "https://{0}:8088/deviceManager/rest/{1}/QUOTATREE/{2}".\
+                  format( self.host, self.system_id, dtreeId )
+            params = {}
+            if vStoreId is not None:
+                params[ 'vstoreId' ] = vStoreId.encode( "utf-8" )
+        
+            url = url + urllib.parse.urlencode( params )
+           
+            response_json = self.request( url, 'DELETE' )
         except Exception as e:
             raise OceanStorError("HTTP Exception: {0}".format(e))

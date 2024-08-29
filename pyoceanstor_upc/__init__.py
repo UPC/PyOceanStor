@@ -503,12 +503,12 @@ class OceanStor(object):
             url = "https://{0}:8088/deviceManager/rest/{1}/FS_QUOTA/{2}?".\
                   format( self.host, self.system_id, quotaId )
             params = {
-		        'SPACEUNITTYPE': 0,
+                'SPACEUNITTYPE': 0,
             }
             if vStoreId is not None:
                 params[ 'vstoreId' ] = vStoreId.encode("utf-8")
         
-            url = url + urllib.parse.urlencode( params )
+            #url = url + urllib.parse.urlencode( params )
             response_json = self.query(url)
             res = response_json["data"]
         except Exception as e:
@@ -520,7 +520,10 @@ class OceanStor(object):
     def quotauser( self, user : str, parentId : str, parentType : OceanStorParentType, vStoreId = None ):
         # First query the number of quotas
         nQuotas = self.quotas( parentId, parentType, vStoreId )
-        pageSize = 1000
+        self.logger.debug( "nQuotas: {}".format( nQuotas ) )
+        # According to the official doc, the maximum value is 10000
+        # But in our tests anything over 100 results in failure
+        pageSize = 100
 
         # We will be using "Interface for Batch Querying Quota Information"
         # It is similar to the web ui for Quota Reports and thus it should only
@@ -547,6 +550,7 @@ class OceanStor(object):
                 if vStoreId is not None:
                     params[ 'vstoreId' ] = vStoreId.encode("utf-8")
             
+                #url = url + urllib.parse.urlencode( params )
                 url = url + urllib.parse.urlencode( params )
                 self.logger.debug( "URL: {}".format( url ) )
                 response_json = self.query(url)
